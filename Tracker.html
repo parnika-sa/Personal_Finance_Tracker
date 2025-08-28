@@ -1,0 +1,1560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Personal Expense Tracker with GitHub</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .glass-effect {
+      background: rgba(255, 255, 255, 0.25);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+    .gradient-bg { 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%); 
+    }
+    .modern-card {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    }
+    .neon-button {
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+    .neon-button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
+    }
+    .floating-animation {
+      animation: float 6s ease-in-out infinite;
+    }
+    @keyframes float {
+      0% { transform: translateY(0px); }
+      50% { transform: translateY(-10px); }
+      100% { transform: translateY(0px); }
+    }
+    .pulse-animation {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .5; }
+    }
+    .login-bg {
+      background: linear-gradient(45deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #f5576c 75%, #4facfe 100%);
+      background-size: 400% 400%;
+      animation: gradientShift 15s ease infinite;
+    }
+    @keyframes gradientShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    .progress-bar {
+      transition: width 0.5s ease-in-out;
+    }
+    .sync-indicator {
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Hardcoded GitHub configuration
+    const GITHUB_CONFIG = {
+      token: '',  // User will input this once
+      repo: 'parnika-sa/pt'
+    };
+
+    // GitHub API utilities with hardcoded repo
+    const githubAPI = {
+      baseURL: 'https://api.github.com',
+      
+      // Get file from GitHub
+      getFile: async (token, filepath) => {
+        try {
+          const response = await fetch(`${githubAPI.baseURL}/repos/${GITHUB_CONFIG.repo}/contents/${filepath}`, {
+            headers: {
+              'Authorization': `token ${token}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          });
+          
+          if (response.status === 404) {
+            return null;
+          }
+          
+          if (!response.ok) {
+            throw new Error(`GitHub API Error: ${response.status}`);
+          }
+          
+          const data = await response.json();
+          const content = atob(data.content);
+          return JSON.parse(content);
+        } catch (error) {
+          console.error('Error getting file from GitHub:', error);
+          return null;
+        }
+      },
+      
+      // Save file to GitHub
+      saveFile: async (token, filepath, data, message) => {
+        try {
+          let sha = null;
+          try {
+            const existingFile = await fetch(`${githubAPI.baseURL}/repos/${GITHUB_CONFIG.repo}/contents/${filepath}`, {
+              headers: {
+                'Authorization': `token ${token}`,
+                'Accept': 'application/vnd.github.v3+json'
+              }
+            });
+            if (existingFile.ok) {
+              const fileData = await existingFile.json();
+              sha = fileData.sha;
+            }
+          } catch (e) {
+            // File doesn't exist
+          }
+          
+          const content = btoa(JSON.stringify(data, null, 2));
+          const payload = {
+            message,
+            content,
+            ...(sha && { sha })
+          };
+          
+          const response = await fetch(`${githubAPI.baseURL}/repos/${GITHUB_CONFIG.repo}/contents/${filepath}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `token ${token}`,
+              'Accept': 'application/vnd.github.v3+json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+          });
+          
+          if (!response.ok) {
+            throw new Error(`GitHub API Error: ${response.status}`);
+          }
+          
+          return await response.json();
+        } catch (error) {
+          console.error('Error saving file to GitHub:', error);
+          throw error;
+        }
+      },
+      
+      // Test GitHub connection
+      testConnection: async (token) => {
+        try {
+          const response = await fetch(`${githubAPI.baseURL}/repos/${GITHUB_CONFIG.repo}`, {
+            headers: {
+              'Authorization': `token ${token}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
+          });
+          return response.ok;
+        } catch (error) {
+          return false;
+        }
+      }
+    };
+
+    // GitHub Storage utilities
+    const githubStorage = {
+      // Save user data
+      saveUser: async (token, userInfo) => {
+        try {
+          const users = await githubAPI.getFile(token, 'users/all-users.json') || {};
+          users[userInfo.email] = {
+            name: userInfo.name,
+            email: userInfo.email,
+            password: userInfo.password, // In real app, hash this!
+            createdAt: new Date().toISOString()
+          };
+          await githubAPI.saveFile(token, 'users/all-users.json', users, `Add user ${userInfo.email}`);
+          return users[userInfo.email];
+        } catch (error) {
+          throw new Error('Failed to save user');
+        }
+      },
+
+      // Get user data
+      getUser: async (token, email) => {
+        try {
+          const users = await githubAPI.getFile(token, 'users/all-users.json') || {};
+          return users[email] || null;
+        } catch (error) {
+          return null;
+        }
+      },
+
+      // Validate user login
+      validateUser: async (token, email, password) => {
+        try {
+          const user = await githubStorage.getUser(token, email);
+          if (user && user.password === password) {
+            return { success: true, user };
+          }
+          return { success: false, message: 'Invalid email or password' };
+        } catch (error) {
+          return { success: false, message: 'Login failed' };
+        }
+      },
+
+      // Save session
+      saveSession: async (token, userEmail) => {
+        try {
+          const sessionData = {
+            userEmail,
+            loginTime: new Date().toISOString(),
+            token: token
+          };
+          await githubAPI.saveFile(token, 'sessions/current-session.json', sessionData, 'Save current session');
+          return sessionData;
+        } catch (error) {
+          console.error('Session save failed:', error);
+        }
+      },
+
+      // Get session
+      getSession: async (token) => {
+        try {
+          return await githubAPI.getFile(token, 'sessions/current-session.json');
+        } catch (error) {
+          return null;
+        }
+      },
+
+      // Save expenses
+      saveExpenses: async (token, userEmail, expenses) => {
+        try {
+          const filepath = `expenses/${userEmail}-expenses.json`;
+          await githubAPI.saveFile(token, filepath, expenses, `Update expenses for ${userEmail}`);
+        } catch (error) {
+          console.error('Failed to save expenses:', error);
+        }
+      },
+
+      // Get expenses
+      getExpenses: async (token, userEmail) => {
+        try {
+          const filepath = `expenses/${userEmail}-expenses.json`;
+          return await githubAPI.getFile(token, filepath) || [];
+        } catch (error) {
+          return [];
+        }
+      },
+
+      // Save budgets
+      saveBudgets: async (token, userEmail, budgets) => {
+        try {
+          const filepath = `budgets/${userEmail}-budgets.json`;
+          await githubAPI.saveFile(token, filepath, budgets, `Update budgets for ${userEmail}`);
+        } catch (error) {
+          console.error('Failed to save budgets:', error);
+        }
+      },
+
+      // Get budgets
+      getBudgets: async (token, userEmail) => {
+        try {
+          const filepath = `budgets/${userEmail}-budgets.json`;
+          return await githubAPI.getFile(token, filepath) || {};
+        } catch (error) {
+          return {};
+        }
+      }
+    };
+
+    // Login Component
+    function LoginForm({ onLogin, switchToRegister }) {
+      const [formData, setFormData] = useState({ email: '', password: '', token: '' });
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setError('');
+
+        try {
+          if (!formData.token) {
+            setError('GitHub token is required');
+            setLoading(false);
+            return;
+          }
+
+          const result = await githubStorage.validateUser(formData.token, formData.email, formData.password);
+          if (result.success) {
+            GITHUB_CONFIG.token = formData.token;
+            await githubStorage.saveSession(formData.token, result.user.email);
+            onLogin(result.user, formData.token);
+          } else {
+            setError(result.message);
+          }
+        } catch (err) {
+          setError('Login failed. Please try again.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="modern-card rounded-3xl p-8 w-full max-w-md mx-auto">
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <span className="text-2xl text-white font-bold">₹</span>
+            </div>
+            <h2 className="text-3xl font-bold text-gray-800 mb-2">Welcome Back</h2>
+            <p className="text-gray-600">Track your personal expenses</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">
+                {error}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                GitHub Token
+              </label>
+              <input
+                type="password"
+                required
+                value={formData.token}
+                onChange={(e) => setFormData({...formData, token: e.target.value})}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300"
+                placeholder="ghp_xxxxxxxxxxxxxxxxxx"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Email Address
+              </label>
+              <input
+                type="email"
+                required
+                value={formData.email}
+                onChange={(e) => setFormData({...formData, email: e.target.value})}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300"
+                placeholder="Enter your email"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                required
+                value={formData.password}
+                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300"
+                placeholder="Enter your password"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full neon-button bg-gradient-to-r from-purple-600 to-pink-600 text-white px-6 py-4 rounded-xl font-bold text-lg hover:from-purple-700 hover:to-pink-700 transition-all duration-300 shadow-lg disabled:opacity-50"
+            >
+              {loading ? 'Signing In...' : 'Sign In'}
+            </button>
+          </form>
+
+          <div className="text-center mt-8">
+            <p className="text-gray-600">
+              Don't have an account?{' '}
+              <button
+                onClick={switchToRegister}
+                className="text-purple-600 font-semibold hover:text-purple-700 transition-colors"
+              >
+                Create one
+              </button>
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    // Register Component
+    function RegisterForm({ onRegister, switchToLogin }) {
+      const [formData, setFormData] = useState({ name: '', email: '', password: '', confirmPassword: '', token: '' });
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setError('');
+
+        if (formData.password !== formData.confirmPassword) {
+          setError('Passwords do not match');
+          setLoading(false);
+          return;
+        }
+
+        if (formData.password.length < 6) {
+          setError('Password must be at least 6 characters long');
+          setLoading(false);
+          return;
+        }
+
+        if (!formData.token) {
+          setError('GitHub token is required');
+          setLoading(false);
+          return;
+        }
+
+        try {
+          // Check if user already exists
+          const existingUser = await githubStorage.getUser(formData.token, formData.email);
+          if (existingUser) {
+            setError('An account with this email already exists');
+            setLoading(false);
+            return;
+          }
+
+          // Test GitHub connection first
+          const isValidToken = await githubAPI.testConnection(formData.token);
+          if (!isValidToken) {
+            setError('Invalid GitHub token or no access to repository');
+            setLoading(false);
+            return;
+          }
+
+          const userInfo = {
+            name: formData.name,
+            email: formData.email,
+            password: formData.password
+          };
+          
+          const savedUser = await githubStorage.saveUser(formData.token, userInfo);
+          GITHUB_CONFIG.token = formData.token;
+          await githubStorage.saveSession(formData.token, savedUser.email);
+          onRegister(savedUser, formData.token);
+        } catch (err) {
+          setError('Registration failed. Please try again.');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="modern-card rounded-3xl p-8 w-full max-w-md mx-auto">
+          <div className="text-center mb-8">
+            <div className="w-16 h-16 bg-gradient-to-r from-green-600 to-teal-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <span className="text-2xl text-white font-bold">+</span>
+            </div>
+            <h2 className="text-3xl font-bold text-gray-800 mb-2">Create Account</h2>
+            <p className="text-gray-600">Start managing your expenses</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">
+                {error}
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                GitHub Token
+              </label>
+              <input
+                type="password"
+                required
+                value={formData.token}
+                onChange={(e) => setFormData({...formData, token: e.target.value})}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-green-500 focus:outline-none transition-all duration-300"
+                placeholder="ghp_xxxxxxxxxxxxxxxxxx"
+              />
+              <p className="text-xs text-gray-500 mt-1">Required for parnika-sa/pt repo access</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Full Name
+              </label>
+              <input
+                type="text"
+                required
+                value={formData.name}
+                onChange={(e) => setFormData({...formData, name: e.target.value})}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-green-500 focus:outline-none transition-all duration-300"
+                placeholder="Enter your full name"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Email Address
+              </label>
+              <input
+                type="email"
+                required
+                value={formData.email}
+                onChange={(e) => setFormData({...formData, email: e.target.value})}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-green-500 focus:outline-none transition-all duration-300"
+                placeholder="Enter your email"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                required
+                value={formData.password}
+                onChange={(e) => setFormData({...formData, password: e.target.value})}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-green-500 focus:outline-none transition-all duration-300"
+                placeholder="Create a password (min 6 characters)"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Confirm Password
+              </label>
+              <input
+                type="password"
+                required
+                value={formData.confirmPassword}
+                onChange={(e) => setFormData({...formData, confirmPassword: e.target.value})}
+                className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-green-500 focus:outline-none transition-all duration-300"
+                placeholder="Confirm your password"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full neon-button bg-gradient-to-r from-green-600 to-teal-600 text-white px-6 py-4 rounded-xl font-bold text-lg hover:from-green-700 hover:to-teal-700 transition-all duration-300 shadow-lg disabled:opacity-50"
+            >
+              {loading ? 'Creating Account...' : 'Create Account'}
+            </button>
+          </form>
+
+          <div className="text-center mt-8">
+            <p className="text-gray-600">
+              Already have an account?{' '}
+              <button
+                onClick={switchToLogin}
+                className="text-green-600 font-semibold hover:text-green-700 transition-colors"
+              >
+                Sign in
+              </button>
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    function PersonalExpenseTracker() {
+      // Authentication State
+      const [isAuthenticated, setIsAuthenticated] = useState(false);
+      const [user, setUser] = useState(null);
+      const [showRegister, setShowRegister] = useState(false);
+      const [syncStatus, setSyncStatus] = useState({ syncing: false, lastSync: null });
+      const [loading, setLoading] = useState(true);
+
+      // App State
+      const [expenses, setExpenses] = useState([]);
+      const [budgets, setBudgets] = useState({});
+      const [currentView, setCurrentView] = useState('dashboard');
+      const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substr(0, 7));
+      const [searchTerm, setSearchTerm] = useState('');
+      const [sortBy, setSortBy] = useState('date');
+      const [filterCategory, setFilterCategory] = useState('all');
+
+      const [expense, setExpense] = useState({
+        title: '',
+        category: '',
+        amount: '',
+        date: new Date().toISOString().split('T')[0],
+        description: '',
+        paymentMode: 'cash',
+        receiptNumber: ''
+      });
+
+      const categories = [
+        'Food & Dining',
+        'Transportation',
+        'Shopping & Retail',
+        'Entertainment',
+        'Healthcare & Medical',
+        'Utilities & Bills',
+        'Home & Garden',
+        'Education & Learning',
+        'Personal Care',
+        'Travel & Vacation',
+        'Gifts & Donations',
+        'Investments & Savings',
+        'Personal',
+        'Miscellaneous'
+      ];
+      
+      const paymentModes = ['cash', 'card', 'upi', 'bank_transfer', 'cheque', 'online_payment'];
+
+      // Check for existing session on app load
+      useEffect(() => {
+        const checkExistingSession = async () => {
+          try {
+            // Try to get stored token (you might want to store this in memory)
+            const storedToken = GITHUB_CONFIG.token;
+            if (storedToken) {
+              const session = await githubStorage.getSession(storedToken);
+              if (session && session.userEmail) {
+                const userData = await githubStorage.getUser(storedToken, session.userEmail);
+                if (userData) {
+                  setUser(userData);
+                  setIsAuthenticated(true);
+                  await loadUserData(userData.email, storedToken);
+                }
+              }
+            }
+          } catch (error) {
+            console.error('Session check failed:', error);
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        checkExistingSession();
+      }, []);
+
+      // Load user data from GitHub
+      const loadUserData = async (userEmail, token) => {
+        try {
+          const [userExpenses, userBudgets] = await Promise.all([
+            githubStorage.getExpenses(token, userEmail),
+            githubStorage.getBudgets(token, userEmail)
+          ]);
+          
+          setExpenses(userExpenses);
+          setBudgets(userBudgets);
+        } catch (error) {
+          console.error('Failed to load user data:', error);
+        }
+      };
+
+      // Handle login
+      const handleLogin = async (userInfo, token) => {
+        setUser(userInfo);
+        setIsAuthenticated(true);
+        await loadUserData(userInfo.email, token);
+      };
+
+      // Handle register
+      const handleRegister = async (userInfo, token) => {
+        await handleLogin(userInfo, token);
+      };
+
+      // Handle logout
+      const handleLogout = () => {
+        setUser(null);
+        setIsAuthenticated(false);
+        setExpenses([]);
+        setBudgets({});
+        GITHUB_CONFIG.token = '';
+      };
+
+      // Add Expense
+      const addExpense = async () => {
+        if (!expense.title || !expense.amount || !expense.category) {
+          alert('Please fill all required fields!');
+          return;
+        }
+
+        const newExpense = {
+          id: Date.now(),
+          ...expense,
+          amount: parseFloat(expense.amount),
+          createdAt: new Date().toISOString(),
+          receiptNumber: expense.receiptNumber || `RCP-${Date.now().toString().slice(-6)}`,
+          userId: user?.email
+        };
+
+        const updatedExpenses = [newExpense, ...expenses];
+        setExpenses(updatedExpenses);
+        
+        // Save to GitHub
+        await githubStorage.saveExpenses(GITHUB_CONFIG.token, user.email, updatedExpenses);
+
+        setExpense({
+          title: '',
+          category: '',
+          amount: '',
+          date: new Date().toISOString().split('T')[0],
+          description: '',
+          paymentMode: 'cash',
+          receiptNumber: ''
+        });
+      };
+
+      // Delete Expense
+      const deleteExpense = async (id) => {
+        if (confirm('Are you sure you want to delete this expense?')) {
+          const updatedExpenses = expenses.filter(exp => exp.id !== id);
+          setExpenses(updatedExpenses);
+          
+          // Save to GitHub
+          await githubStorage.saveExpenses(GITHUB_CONFIG.token, user.email, updatedExpenses);
+        }
+      };
+
+      // Update budget
+      const updateBudget = async (category, amount) => {
+        const updatedBudgets = { ...budgets, [category]: parseFloat(amount) };
+        setBudgets(updatedBudgets);
+        
+        // Save to GitHub
+        await githubStorage.saveBudgets(GITHUB_CONFIG.token, user.email, updatedBudgets);
+      };
+
+      // Manual sync
+      const manualSync = async () => {
+        if (GITHUB_CONFIG.token) {
+          setSyncStatus({ syncing: true, lastSync: null });
+          try {
+            await Promise.all([
+              githubStorage.saveExpenses(GITHUB_CONFIG.token, user.email, expenses),
+              githubStorage.saveBudgets(GITHUB_CONFIG.token, user.email, budgets)
+            ]);
+            setSyncStatus({ syncing: false, lastSync: new Date().toISOString() });
+          } catch (error) {
+            setSyncStatus({ syncing: false, lastSync: null });
+          }
+        }
+      };
+
+      // Export backup
+      const exportBackup = () => {
+        const data = {
+          user: user,
+          expenses: expenses,
+          budgets: budgets,
+          exportDate: new Date().toISOString()
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `expense-backup-${user?.name?.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      // Import backup
+      const importBackup = (event) => {
+        const file = event.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            try {
+              const data = JSON.parse(e.target.result);
+              if (data.expenses && data.budgets) {
+                setExpenses(data.expenses);
+                setBudgets(data.budgets);
+                
+                // Save to GitHub
+                await Promise.all([
+                  githubStorage.saveExpenses(GITHUB_CONFIG.token, user.email, data.expenses),
+                  githubStorage.saveBudgets(GITHUB_CONFIG.token, user.email, data.budgets)
+                ]);
+                
+                alert('Data imported successfully!');
+              } else {
+                alert('Invalid backup file format');
+              }
+            } catch (error) {
+              alert('Import failed: Invalid file format');
+            }
+          };
+          reader.readAsText(file);
+        }
+      };
+
+      // Show loading on initial app load
+      if (loading) {
+        return (
+          <div className="min-h-screen login-bg flex items-center justify-center">
+            <div className="text-center">
+              <div className="sync-indicator w-16 h-16 border-4 border-white border-t-transparent rounded-full mx-auto mb-4"></div>
+              <p className="text-white text-xl">Loading...</p>
+            </div>
+          </div>
+        );
+      }
+
+      // Show authentication forms if not logged in
+if (!isAuthenticated) {
+  return (
+    <div className="min-h-screen login-bg flex items-center justify-center px-4">
+      <div className="w-full max-w-6xl mx-auto">
+        <div className="grid lg:grid-cols-2 gap-12 items-center">
+          {/* Left Side - Branding */}
+          <div className="text-center lg:text-left">
+            <div className="floating-animation">
+              <h1 className="text-5xl lg:text-7xl font-bold text-white mb-6 leading-tight">
+                Personal
+                <br />
+                <span className="bg-gradient-to-r from-yellow-300 to-orange-300 bg-clip-text text-transparent">
+                  Expense
+                </span>
+                <br />
+                Tracker
+              </h1>
+              <p className="text-xl text-white/90 mb-8 max-w-lg">
+                Take control of your personal finances with smart budgeting, expense tracking, and GitHub backup.
+              </p>
+              <div className="grid grid-cols-3 gap-4 max-w-md mx-auto lg:mx-0">
+                <div className="glass-effect rounded-2xl p-4 text-center">
+                  <div className="text-2xl mb-2">💰</div>
+                  <div className="text-white text-sm font-semibold">Budget Tracking</div>
+                </div>
+                <div className="glass-effect rounded-2xl p-4 text-center">
+                  <div className="text-2xl mb-2">☁️</div>
+                  <div className="text-white text-sm font-semibold">GitHub Sync</div>
+                </div>
+                <div className="glass-effect rounded-2xl p-4 text-center">
+                  <div className="text-2xl mb-2">📊</div>
+                  <div className="text-white text-sm font-semibold">Analytics</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          {/* Right Side - Auth Forms */}
+          <div className="flex justify-center">
+            {showRegister ? (
+              <RegisterForm 
+                onRegister={handleRegister}
+                switchToLogin={() => setShowRegister(false)}
+              />
+            ) : (
+              <LoginForm 
+                onLogin={handleLogin}
+                switchToRegister={() => setShowRegister(true)}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+      // Filtering and calculations
+      const filteredExpenses = expenses.filter(exp => {
+        const matchesMonth = exp.date.substring(0, 7) === selectedMonth;
+        const matchesSearch = exp.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            exp.category.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesCategory = filterCategory === 'all' || exp.category === filterCategory;
+        
+        return matchesMonth && matchesSearch && matchesCategory;
+      }).sort((a, b) => {
+        switch(sortBy) {
+          case 'amount': return b.amount - a.amount;
+          case 'title': return a.title.localeCompare(b.title);
+          case 'category': return a.category.localeCompare(b.category);
+          default: return new Date(b.date) - new Date(a.date);
+        }
+      });
+
+      const totalAmount = filteredExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+      const avgExpense = filteredExpenses.length > 0 ? totalAmount / filteredExpenses.length : 0;
+      
+      const totalByCategory = categories.map(cat => ({
+        category: cat,
+        total: filteredExpenses.filter(exp => exp.category === cat).reduce((sum, exp) => sum + exp.amount, 0),
+        count: filteredExpenses.filter(exp => exp.category === cat).length,
+        budget: budgets[cat] || 0
+      })).filter(item => item.total > 0 || item.budget > 0).sort((a, b) => b.total - a.total);
+
+      // Excel Export
+      const exportToExcel = () => {
+        const data = filteredExpenses.map(exp => ({
+          'Receipt No': exp.receiptNumber || `RCP-${exp.id.toString().slice(-6)}`,
+          'Title': exp.title,
+          'Category': exp.category,
+          'Amount (₹)': exp.amount,
+          'Date': exp.date,
+          'Payment Mode': exp.paymentMode.replace('_', ' ').toUpperCase(),
+          'Description': exp.description || 'N/A',
+          'Created': new Date(exp.createdAt).toLocaleString('en-IN')
+        }));
+        
+        const summary = [
+          { 'Metric': 'Total Expenses', 'Value': `₹${totalAmount.toLocaleString('en-IN')}` },
+          { 'Metric': 'Total Records', 'Value': filteredExpenses.length },
+          { 'Metric': 'Average Expense', 'Value': `₹${avgExpense.toLocaleString('en-IN')}` },
+          { 'Metric': 'Report Period', 'Value': new Date(selectedMonth).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) }
+        ];
+        
+        const ws1 = XLSX.utils.json_to_sheet(data);
+        const ws2 = XLSX.utils.json_to_sheet(summary);
+        const ws3 = XLSX.utils.json_to_sheet(totalByCategory.map(item => ({
+          'Category': item.category,
+          'Total Spent': `₹${item.total.toLocaleString('en-IN')}`,
+          'Budget': `₹${item.budget.toLocaleString('en-IN')}`,
+          'Remaining': `₹${(item.budget - item.total).toLocaleString('en-IN')}`,
+          'Count': item.count,
+          'Percentage': `${item.budget > 0 ? ((item.total / item.budget) * 100).toFixed(1) : 0}%`
+        })));
+        
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws1, "Detailed Expenses");
+        XLSX.utils.book_append_sheet(wb, ws2, "Summary");
+        XLSX.utils.book_append_sheet(wb, ws3, "Budget Analysis");
+        
+        XLSX.writeFile(wb, `personal-expenses-${selectedMonth}-${user?.name?.replace(/\s+/g, '-')}.xlsx`);
+      };
+
+      // Return the authenticated app UI
+      return (
+        <div className="min-h-screen">
+          {/* Header */}
+          <div className="gradient-bg text-white relative overflow-hidden">
+            <div className="absolute inset-0 bg-black opacity-10"></div>
+            <div className="relative max-w-7xl mx-auto px-6 py-8">
+              <div className="flex items-center justify-between">
+                <div className="floating-animation">
+                  <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-white to-blue-200 bg-clip-text text-transparent">
+                    Personal Expense Tracker
+                  </h1>
+                  <p className="text-blue-100 text-lg">Hello, {user?.name}!</p>
+                  {GITHUB_CONFIG.token && (
+                    <div className="flex items-center mt-2">
+                      <span className={`w-2 h-2 rounded-full mr-2 ${syncStatus.syncing ? 'bg-yellow-400' : 'bg-green-400'}`}></span>
+                      <span className="text-blue-200 text-sm">
+                        GitHub: {syncStatus.syncing ? 'Syncing...' : 'Connected'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                
+                <div className="flex items-center space-x-4">
+                  <div className="glass-effect rounded-2xl p-4 text-center">
+                    <div className="text-sm text-blue-100">This Month</div>
+                    <div className="text-white font-bold text-xl">₹{totalAmount.toLocaleString('en-IN')}</div>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    {GITHUB_CONFIG.token && (
+                      <button
+                        onClick={manualSync}
+                        disabled={syncStatus.syncing}
+                        className={`glass-effect rounded-2xl px-4 py-2 text-white hover:bg-white/30 transition-all duration-300 text-sm ${syncStatus.syncing ? 'opacity-50' : ''}`}
+                        title="Manual Sync to GitHub"
+                      >
+                        <span className={syncStatus.syncing ? 'sync-indicator' : ''}>
+                          🔄
+                        </span>
+                      </button>
+                    )}
+                    <button
+                      onClick={exportBackup}
+                      className="glass-effect rounded-2xl px-4 py-2 text-white hover:bg-white/30 transition-all duration-300 text-sm"
+                      title="Export Backup"
+                    >
+                      📤
+                    </button>
+                    <label className="glass-effect rounded-2xl px-4 py-2 text-white hover:bg-white/30 transition-all duration-300 cursor-pointer text-sm">
+                      📥
+                      <input type="file" accept=".json" onChange={importBackup} className="hidden" />
+                    </label>
+                    <button
+                      onClick={handleLogout}
+                      className="glass-effect rounded-2xl px-6 py-3 text-white hover:bg-white/30 transition-all duration-300 font-semibold"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                </div>
+              </div>
+              
+              {syncStatus.lastSync && (
+                <div className="mt-4 text-blue-200 text-sm">
+                  Last synced: {new Date(syncStatus.lastSync).toLocaleString('en-IN')}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Navigation */}
+          <div className="bg-white shadow-lg sticky top-0 z-50">
+            <div className="max-w-7xl mx-auto">
+              <nav className="flex space-x-8 px-6">
+                {[
+                  { key: 'dashboard', label: 'Dashboard', icon: '🏠' },
+                  { key: 'add-expense', label: 'Add Expense', icon: '➕' },
+                  { key: 'budget', label: 'Budget', icon: '💰' },
+                  { key: 'analytics', label: 'Analytics', icon: '📈' }
+                ].map(item => (
+                  <button
+                    key={item.key}
+                    onClick={() => setCurrentView(item.key)}
+                    className={`py-4 px-6 border-b-3 font-medium transition-all duration-300 ${
+                      currentView === item.key 
+                        ? 'border-purple-500 text-purple-600 bg-purple-50' 
+                        : 'border-transparent text-gray-600 hover:text-purple-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    {item.icon} {item.label}
+                  </button>
+                ))}
+              </nav>
+            </div>
+          </div>
+
+          <div className="max-w-7xl mx-auto p-6">
+            {/* Dashboard View */}
+            {currentView === 'dashboard' && (
+              <div className="space-y-8">
+                {/* Summary Cards */}
+                <div className="grid lg:grid-cols-4 md:grid-cols-2 gap-6">
+                  <div className="modern-card p-6 rounded-2xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-20 h-20 bg-purple-500 opacity-10 rounded-full -mr-10 -mt-10"></div>
+                    <div className="relative">
+                      <h3 className="text-lg font-semibold text-gray-700 mb-2">Total Spent</h3>
+                      <p className="text-3xl font-bold text-purple-600">₹{totalAmount.toLocaleString('en-IN')}</p>
+                      <p className="text-sm text-gray-500 mt-2">This month</p>
+                    </div>
+                  </div>
+
+                  <div className="modern-card p-6 rounded-2xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-20 h-20 bg-green-500 opacity-10 rounded-full -mr-10 -mt-10"></div>
+                    <div className="relative">
+                      <h3 className="text-lg font-semibold text-gray-700 mb-2">Transactions</h3>
+                      <p className="text-3xl font-bold text-green-600">{filteredExpenses.length}</p>
+                      <p className="text-sm text-gray-500 mt-2">Total records</p>
+                    </div>
+                  </div>
+
+                  <div className="modern-card p-6 rounded-2xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-20 h-20 bg-blue-500 opacity-10 rounded-full -mr-10 -mt-10"></div>
+                    <div className="relative">
+                      <h3 className="text-lg font-semibold text-gray-700 mb-2">Average Expense</h3>
+                      <p className="text-3xl font-bold text-blue-600">₹{avgExpense.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
+                      <p className="text-sm text-gray-500 mt-2">Per transaction</p>
+                    </div>
+                  </div>
+
+                  <div className="modern-card p-6 rounded-2xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-20 h-20 bg-orange-500 opacity-10 rounded-full -mr-10 -mt-10"></div>
+                    <div className="relative">
+                      <h3 className="text-lg font-semibold text-gray-700 mb-2">Top Category</h3>
+                      <p className="text-xl font-bold text-orange-600 truncate">
+                        {totalByCategory.length > 0 ? totalByCategory[0].category : 'No data'}
+                      </p>
+                      <p className="text-sm text-gray-500 mt-2">
+                        ₹{totalByCategory.length > 0 ? totalByCategory[0].total.toLocaleString('en-IN') : '0'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Controls */}
+                <div className="modern-card p-6 rounded-2xl">
+                  <div className="grid lg:grid-cols-5 md:grid-cols-3 gap-4 items-end">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Month</label>
+                      <input
+                        type="month"
+                        value={selectedMonth}
+                        onChange={(e) => setSelectedMonth(e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-xl px-4 py-2 focus:border-purple-500 focus:outline-none transition-colors"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Search</label>
+                      <input
+                        type="text"
+                        placeholder="Search expenses..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-xl px-4 py-2 focus:border-purple-500 focus:outline-none transition-colors"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Category</label>
+                      <select
+                        value={filterCategory}
+                        onChange={(e) => setFilterCategory(e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-xl px-4 py-2 focus:border-purple-500 focus:outline-none transition-colors"
+                      >
+                        <option value="all">All Categories</option>
+                        {categories.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Sort By</label>
+                      <select
+                        value={sortBy}
+                        onChange={(e) => setSortBy(e.target.value)}
+                        className="w-full border-2 border-gray-200 rounded-xl px-4 py-2 focus:border-purple-500 focus:outline-none transition-colors"
+                      >
+                        <option value="date">Date</option>
+                        <option value="amount">Amount</option>
+                        <option value="title">Title</option>
+                        <option value="category">Category</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <button
+                        onClick={exportToExcel}
+                        className="neon-button w-full bg-gradient-to-r from-green-600 to-teal-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-green-700 hover:to-teal-700 transition-all duration-300 shadow-lg"
+                      >
+                        Export Excel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Expenses List */}
+                <div className="modern-card rounded-2xl overflow-hidden">
+                  <div className="gradient-bg text-white px-6 py-4">
+                    <h2 className="text-xl font-bold">Recent Expenses</h2>
+                    <p className="text-blue-100">
+                      Showing {filteredExpenses.length} expenses • Total: ₹{totalAmount.toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                  
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Details</th>
+                          <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Category</th>
+                          <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Amount</th>
+                          <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Date</th>
+                          <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Payment</th>
+                          <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200 bg-white">
+                        {filteredExpenses.map((exp, index) => (
+                          <tr key={exp.id} className={`hover:bg-gray-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-gray-25'}`}>
+                            <td className="px-6 py-4">
+                              <div className="max-w-xs">
+                                <div className="text-sm font-semibold text-gray-900 truncate">{exp.title}</div>
+                                {exp.description && (
+                                  <div className="text-xs text-gray-400 truncate mt-1">{exp.description}</div>
+                                )}
+                                <div className="text-xs text-purple-500 mt-1">#{exp.receiptNumber || `RCP-${exp.id.toString().slice(-6)}`}</div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                {exp.category}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <div className="text-sm font-bold text-gray-900">₹{exp.amount.toLocaleString('en-IN')}</div>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-500">
+                              {new Date(exp.date).toLocaleDateString('en-IN')}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                exp.paymentMode === 'cash' ? 'bg-green-100 text-green-800' :
+                                exp.paymentMode === 'card' ? 'bg-purple-100 text-purple-800' :
+                                exp.paymentMode === 'upi' ? 'bg-orange-100 text-orange-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>
+                                {exp.paymentMode.replace('_', ' ').toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4">
+                              <button
+                                onClick={() => deleteExpense(exp.id)}
+                                className="text-red-600 hover:text-red-900 font-medium text-sm hover:bg-red-50 px-2 py-1 rounded transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    
+                    {filteredExpenses.length === 0 && (
+                      <div className="text-center py-16">
+                        <div className="text-6xl mb-4 opacity-20">💸</div>
+                        <h3 className="text-lg font-semibold text-gray-700 mb-2">No expenses found</h3>
+                        <p className="text-gray-500 mb-4">No expenses match your current filters</p>
+                        <button
+                          onClick={() => setCurrentView('add-expense')}
+                          className="bg-purple-600 text-white px-6 py-2 rounded-xl hover:bg-purple-700 transition-colors"
+                        >
+                          Add your first expense
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Add Expense View */}
+            {currentView === 'add-expense' && (
+              <div className="max-w-4xl mx-auto">
+                <div className="modern-card rounded-2xl p-8">
+                  <div className="text-center mb-8">
+                    <h2 className="text-3xl font-bold text-gray-800 mb-2">Add New Expense</h2>
+                    <p className="text-gray-600">Record your personal spending</p>
+                  </div>
+                  
+                  <div className="grid lg:grid-cols-2 gap-8">
+                    {/* Left Column */}
+                    <div className="space-y-6">
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                          Expense Title *
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g., Grocery Shopping"
+                          value={expense.title}
+                          onChange={(e) => setExpense({...expense, title: e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                          Category *
+                        </label>
+                        <select
+                          value={expense.category}
+                          onChange={(e) => setExpense({...expense, category: e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300"
+                        >
+                          <option value="">Select Category</option>
+                          {categories.map(cat => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                          Amount (₹) *
+                        </label>
+                        <input
+                          type="number"
+                          placeholder="0.00"
+                          step="0.01"
+                          value={expense.amount}
+                          onChange={(e) => setExpense({...expense, amount: e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                          Date *
+                        </label>
+                        <input
+                          type="date"
+                          value={expense.date}
+                          onChange={(e) => setExpense({...expense, date: e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Right Column */}
+                    <div className="space-y-6">
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                          Payment Mode
+                        </label>
+                        <select
+                          value={expense.paymentMode}
+                          onChange={(e) => setExpense({...expense, paymentMode: e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300"
+                        >
+                          {paymentModes.map(mode => (
+                            <option key={mode} value={mode}>
+                              {mode.replace('_', ' ').toUpperCase()}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                          Receipt Number
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Auto-generated if empty"
+                          value={expense.receiptNumber}
+                          onChange={(e) => setExpense({...expense, receiptNumber: e.target.value})}
+                          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-3">
+                          Notes
+                        </label>
+                        <textarea
+                          placeholder="Additional details about this expense..."
+                          value={expense.description}
+                          onChange={(e) => setExpense({...expense, description: e.target.value})}
+                          rows="6"
+                          className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:border-purple-500 focus:outline-none transition-all duration-300 resize-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex space-x-4 mt-8 pt-6 border-t border-gray-200">
+                    <button
+                      onClick={addExpense}
+                      className="flex-1 neon-button bg-gradient-to-r from-purple-600 to-pink-600 text-white px-8 py-4 rounded-xl font-bold text-lg hover:from-purple-700 hover:to-pink-700 transition-all duration-300 shadow-lg"
+                    >
+                      Add Expense
+                    </button>
+                    <button
+                      onClick={() => setCurrentView('dashboard')}
+                      className="px-8 py-4 border-2 border-gray-300 rounded-xl font-semibold text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-all duration-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Budget View */}
+            {currentView === 'budget' && (
+              <div className="space-y-8">
+                <div className="text-center mb-8">
+                  <h2 className="text-3xl font-bold text-gray-800 mb-2">Budget Management</h2>
+                  <p className="text-gray-600">Set and track your spending limits</p>
+                </div>
+
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {categories.map(category => {
+                    const spent = expenses
+                      .filter(exp => exp.category === category && exp.date.substring(0, 7) === selectedMonth)
+                      .reduce((sum, exp) => sum + exp.amount, 0);
+                    const budget = budgets[category] || 0;
+                    const percentage = budget > 0 ? (spent / budget) * 100 : 0;
+                    const isOverBudget = spent > budget && budget > 0;
+                    
+                    return (
+                      <div key={category} className="modern-card p-6 rounded-2xl">
+                        <div className="mb-4">
+                          <h3 className="text-lg font-semibold text-gray-800 mb-2">{category}</h3>
+                          <div className="flex items-center justify-between">
+                            <span className="text-2xl font-bold text-purple-600">
+                              ₹{spent.toLocaleString('en-IN')}
+                            </span>
+                            <span className="text-sm text-gray-500">
+                              of ₹{budget.toLocaleString('en-IN')}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="mb-4">
+                          <div className="flex justify-between text-sm mb-2">
+                            <span>Budget Progress</span>
+                            <span className={isOverBudget ? 'text-red-600' : 'text-gray-600'}>
+                              {percentage.toFixed(1)}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-3">
+                            <div
+                              className={`progress-bar h-3 rounded-full ${
+                                isOverBudget ? 'bg-red-500' : 
+                                percentage > 80 ? 'bg-yellow-500' : 'bg-green-500'
+                              }`}
+                              style={{ width: `${Math.min(percentage, 100)}%` }}
+                            ></div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="block text-sm font-medium text-gray-700">
+                            Set Budget (₹)
+                          </label>
+                          <input
+                            type="number"
+                            placeholder="0"
+                            value={budgets[category] || ''}
+                            onChange={(e) => updateBudget(category, e.target.value)}
+                            className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 focus:border-purple-500 focus:outline-none"
+                          />
+                        </div>
+
+                        {isOverBudget && (
+                          <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded-lg">
+                            <p className="text-red-700 text-sm">
+                              Over budget by ₹{(spent - budget).toLocaleString('en-IN')}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Analytics View */}
+            {currentView === 'analytics' && (
+              <div className="space-y-8">
+                <div className="text-center mb-8">
+                  <h2 className="text-3xl font-bold text-gray-800 mb-2">Spending Analytics</h2>
+                  <p className="text-gray-600">Insights into your financial patterns</p>
+                </div>
+
+                {/* Category Analysis */}
+                <div className="modern-card rounded-2xl p-6">
+                  <h3 className="text-xl font-bold text-gray-800 mb-6">Category Breakdown</h3>
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {totalByCategory.map((item, index) => (
+                      <div key={item.category} className="bg-gradient-to-br from-purple-50 to-pink-50 p-4 rounded-xl border border-purple-100">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-semibold text-gray-700 truncate">{item.category}</h4>
+                          <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded-full">
+                            {item.count} items
+                          </span>
+                        </div>
+                        <div className="text-2xl font-bold text-purple-600 mb-1">
+                          ₹{item.total.toLocaleString('en-IN')}
+                        </div>
+                        <div className="text-sm text-gray-500 mb-2">
+                          {((item.total / totalAmount) * 100).toFixed(1)}% of total
+                        </div>
+                        <div className="mt-2 bg-purple-200 rounded-full h-2">
+                          <div 
+                            className="bg-purple-600 h-2 rounded-full transition-all duration-500" 
+                            style={{width: `${(item.total / totalAmount) * 100}%`}}
+                          ></div>
+                        </div>
+                        {item.budget > 0 && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            Budget: ₹{item.budget.toLocaleString('en-IN')} 
+                            ({item.budget > item.total ? 'Under' : 'Over'} by ₹{Math.abs(item.budget - item.total).toLocaleString('en-IN')})
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Payment Mode Analysis */}
+                <div className="modern-card rounded-2xl p-6">
+                  <h3 className="text-xl font-bold text-gray-800 mb-6">Payment Methods</h3>
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {paymentModes.map(mode => {
+                      const modeExpenses = filteredExpenses.filter(exp => exp.paymentMode === mode);
+                      const modeTotal = modeExpenses.reduce((sum, exp) => sum + exp.amount, 0);
+                      if (modeTotal === 0) return null;
+                      
+                      return (
+                        <div key={mode} className="bg-gradient-to-br from-blue-50 to-teal-50 p-4 rounded-xl border border-blue-100">
+                          <h4 className="font-semibold text-gray-700 mb-2">
+                            {mode.replace('_', ' ').toUpperCase()}
+                          </h4>
+                          <div className="text-xl font-bold text-blue-600 mb-1">
+                            ₹{modeTotal.toLocaleString('en-IN')}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {modeExpenses.length} transactions
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Quick Stats */}
+                <div className="modern-card rounded-2xl p-6">
+                  <h3 className="text-xl font-bold text-gray-800 mb-6">Quick Stats</h3>
+                  <div className="grid md:grid-cols-4 gap-6">
+                    <div className="text-center">
+                      <div className="text-3xl mb-2">💸</div>
+                      <div className="text-lg font-bold text-red-600">
+                        ₹{filteredExpenses.length > 0 ? Math.max(...filteredExpenses.map(e => e.amount)).toLocaleString('en-IN') : '0'}
+                      </div>
+                      <div className="text-sm text-gray-500">Largest Expense</div>
+                    </div>
+                    
+                    <div className="text-center">
+                      <div className="text-3xl mb-2">📊</div>
+                      <div className="text-lg font-bold text-purple-600">
+                        ₹{avgExpense.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                      </div>
+                      <div className="text-sm text-gray-500">Average Spending</div>
+                    </div>
+                    
+                    <div className="text-center">
+                      <div className="text-3xl mb-2">📅</div>
+                      <div className="text-lg font-bold text-green-600">
+                        {new Set(filteredExpenses.map(e => e.date)).size}
+                      </div>
+                      <div className="text-sm text-gray-500">Active Days</div>
+                    </div>
+                    
+                    <div className="text-center">
+                      <div className="text-3xl mb-2">🏷️</div>
+                      <div className="text-lg font-bold text-orange-600">
+                        {categories.filter(cat => filteredExpenses.some(exp => exp.category === cat)).length}
+                      </div>
+                      <div className="text-sm text-gray-500">Categories Used</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<PersonalExpenseTracker />, document.getElementById('root'));
+  </script>
+</body>
+</html>
